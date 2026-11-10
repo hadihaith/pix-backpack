@@ -7,6 +7,7 @@ import android.location.LocationManager
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -20,6 +21,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
@@ -45,14 +48,29 @@ import kotlinx.coroutines.withTimeoutOrNull
 private const val SCAN_DURATION_MS = 12_000L
 
 @Composable
-fun BleScannerScreen(modifier: Modifier = Modifier) {
+fun BleScannerScreen(onDeviceClick: (BleDevice) -> Unit, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val scanner = remember { BleScanner(context.applicationContext) }
 
     // Keyed by address so repeat advertisements update a device instead of duplicating it.
     val devices = remember { mutableStateMapOf<String, BleDevice>() }
-    val sortedDevices by remember {
-        derivedStateOf { devices.values.sortedByDescending { it.rssi } }
+    // By default only PIX backpacks are listed. Turning that off shows everything nearby, with
+    // a name filter and a named-only toggle for picking through the noise.
+    var pixOnly by remember { mutableStateOf(true) }
+    var namedOnly by remember { mutableStateOf(true) }
+    var query by remember { mutableStateOf("") }
+    val visibleDevices by remember {
+        derivedStateOf {
+            devices.values
+                .filter { !pixOnly || it.isPixBackpack }
+                .filter { pixOnly || !namedOnly || it.name != null }
+                .filter {
+                    pixOnly || query.isBlank() ||
+                        it.name?.contains(query.trim(), ignoreCase = true) == true ||
+                        it.address.contains(query.trim(), ignoreCase = true)
+                }
+                .sortedByDescending { it.rssi }
+        }
     }
     var status by remember { mutableStateOf("Ready to scan") }
     var scanning by remember { mutableStateOf(false) }
@@ -94,9 +112,25 @@ fun BleScannerScreen(modifier: Modifier = Modifier) {
         status = "Scanning for nearby devices…"
         try {
             withTimeoutOrNull(SCAN_DURATION_MS) {
-                scanner.scan().collect { devices[it.address] = it }
+                // In PIX-only mode the Bluetooth controller filters by the PIX service UUID;
+                // otherwise everything nearby is reported.
+                val serviceFilter = if (pixOnly) PIX_SERVICE_UUID else null
+                scanner.scan(serviceFilter).collect { device ->
+                    // Not every packet carries the name or service list (they may only be in
+                    // the scan response), so keep what was seen before instead of losing it.
+                    val known = devices[device.address]
+                    devices[device.address] = device.copy(
+                        name = device.name ?: known?.name,
+                        serviceUuids = device.serviceUuids.ifEmpty { known?.serviceUuids.orEmpty() },
+                    )
+                }
             }
-            status = "Scan finished"
+            val pixCount = devices.values.count { it.isPixBackpack }
+            status = when (pixCount) {
+                0 -> "Scan finished: no PIX backpack found. Make sure it's on and nearby."
+                1 -> "Scan finished: found 1 PIX backpack"
+                else -> "Scan finished: found $pixCount PIX backpacks"
+            }
         } catch (e: BleScanException) {
             status = e.message ?: "Scan failed"
         } catch (e: SecurityException) {
@@ -142,14 +176,43 @@ fun BleScannerScreen(modifier: Modifier = Modifier) {
         Text(status, style = MaterialTheme.typography.bodyMedium)
         Spacer(Modifier.height(16.dp))
 
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            // The scan filter is fixed when a scan starts, so the mode can't change mid-scan.
+            FilterChip(
+                selected = pixOnly,
+                onClick = { pixOnly = !pixOnly },
+                label = { Text("PIX backpacks only") },
+                enabled = !scanning,
+            )
+            if (!pixOnly) {
+                FilterChip(
+                    selected = namedOnly,
+                    onClick = { namedOnly = !namedOnly },
+                    label = { Text("Named only") },
+                )
+            }
+        }
+        if (!pixOnly) {
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                label = { Text("Filter by name or address") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+
         Text(
-            "Discovered devices (${devices.size})",
+            if (pixOnly) "PIX backpacks (${visibleDevices.size})"
+            else "Showing ${visibleDevices.size} of ${devices.size} devices",
             style = MaterialTheme.typography.titleMedium,
         )
 
         LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
-            items(sortedDevices, key = { it.address }) { device ->
-                BleDeviceRow(device)
+            items(visibleDevices, key = { it.address }) { device ->
+                BleDeviceRow(device, onClick = { onDeviceClick(device) })
                 HorizontalDivider()
             }
         }
@@ -157,12 +220,42 @@ fun BleScannerScreen(modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun BleDeviceRow(device: BleDevice) {
+private fun BleDeviceRow(device: BleDevice, onClick: () -> Unit) {
     ListItem(
+        modifier = Modifier.clickable(onClick = onClick),
         headlineContent = { Text(device.name ?: "Unknown device") },
-        supportingContent = { Text(device.address) },
+        supportingContent = {
+            Column {
+                Text(device.address)
+                if (device.manufacturerIds.isNotEmpty()) {
+                    Text(
+                        "Maker: " + device.manufacturerIds.joinToString { manufacturerLabel(it) },
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                if (device.serviceUuids.isNotEmpty()) {
+                    Text(
+                        "Services: " + device.serviceUuids.joinToString(),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+        },
         trailingContent = { Text("${device.rssi} dBm") },
     )
+}
+
+/** Names for the company IDs that make up most of the noise in a typical scan. */
+private fun manufacturerLabel(id: Int): String {
+    val name = when (id) {
+        0x004C -> "Apple"
+        0x0075 -> "Samsung"
+        0x0006 -> "Microsoft"
+        0x00E0 -> "Google"
+        else -> null
+    }
+    val hex = "0x%04X".format(id)
+    return if (name != null) "$name ($hex)" else hex
 }
 
 private fun Context.isLocationEnabled(): Boolean {
