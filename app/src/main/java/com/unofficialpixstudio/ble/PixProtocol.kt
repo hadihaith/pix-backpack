@@ -1,5 +1,6 @@
 package com.unofficialpixstudio.ble
 
+import com.unofficialpixstudio.image.PixelArt
 import java.util.UUID
 
 /*
@@ -35,10 +36,28 @@ object PixBrightness {
      */
     const val MAX_SAFE_PERCENT = 85
 
+    /** LED load of the test pattern, the image [MAX_SAFE_PERCENT] was measured with. */
+    private val referenceLoad: Double by lazy { PixelArt.relativeLoad(pixTestPattern(16, 20)) }
+
+    /**
+     * Highest brightness that should stay steady for [pixels], assuming LED current scales with
+     * image load × brightness: brighter (whiter) images than the test pattern get a lower
+     * limit; darker ones still never exceed [MAX_SAFE_PERCENT].
+     */
+    fun maxSafeFor(pixels: IntArray): Int {
+        val load = PixelArt.relativeLoad(pixels)
+        if (load <= referenceLoad) return MAX_SAFE_PERCENT
+        return (MAX_SAFE_PERCENT * referenceLoad / load).toInt().coerceIn(1, MAX_SAFE_PERCENT)
+    }
+
     /** 0–100 % to the raw byte for characteristic 0106. */
     fun percentToRaw(percent: Int): Int = percent.coerceIn(0, 100) * 255 / 100
 
-    fun rawToPercent(raw: Int): Int = (raw and 0xFF) * 100 / 255
+    /**
+     * Rounds (not floors) so every percent survives a write/read-back round trip: 85% is
+     * written as 216 (216.75 floored), and 216 must read back as 85, not 84.
+     */
+    fun rawToPercent(raw: Int): Int = ((raw and 0xFF) * 100 + 127) / 255
 }
 
 object PixMode {

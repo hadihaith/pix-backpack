@@ -19,7 +19,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -27,15 +31,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -43,7 +44,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -51,49 +51,43 @@ import java.util.Locale
 import java.util.UUID
 
 /**
- * Connects to [device] while shown, lists its GATT services and characteristics, reads every
- * readable value and shows notifications as they arrive.
+ * Developer tools (Options → Developer tools): connection controls, brightness/test image,
+ * notifications, every GATT service with its raw values, and a copyable report.
  */
 @Composable
-fun BackpackScreen(device: BleDevice, onBack: () -> Unit, modifier: Modifier = Modifier) {
+fun DeveloperScreen(
+    viewModel: BackpackViewModel,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val context = LocalContext.current
-    val client = remember(device.address) { PixGattClient(context) }
-    val backpack = remember(client) { PixBackpack(client) }
-    val state by client.state.collectAsState()
-    val values by client.values.collectAsState()
-    val notifications by client.notifications.collectAsState()
-    val subscriptions by client.subscriptions.collectAsState()
-    val scope = rememberCoroutineScope()
-    var readingAll by remember { mutableStateOf(false) }
+    val device by viewModel.device.collectAsState()
+    val state by viewModel.connectionState.collectAsState()
+    val values by viewModel.values.collectAsState()
+    val notifications by viewModel.notifications.collectAsState()
+    val subscriptions by viewModel.subscriptions.collectAsState()
+    val readingAll by viewModel.readingAll.collectAsState()
+    val busy by viewModel.busy.collectAsState()
+    val message by viewModel.message.collectAsState()
+    val brightnessLimit by viewModel.brightnessLimit.collectAsState()
 
-    DisposableEffect(client) {
-        client.connect(device.address)
-        onDispose { client.disconnect() }
-    }
     BackHandler(onBack = onBack)
-
-    val isReady = state is GattState.Ready
-    // Once connected, read everything and subscribe to the PIX notify characteristics.
-    LaunchedEffect(isReady) {
-        if (!isReady) return@LaunchedEffect
-        readingAll = true
-        try {
-            client.readAllAndSubscribe()
-        } finally {
-            readingAll = false
-        }
-    }
+    val current = device ?: return
 
     Column(
         modifier = modifier
             .fillMaxSize()
             .padding(horizontal = 24.dp, vertical = 16.dp)
     ) {
-        TextButton(onClick = onBack) { Text("← Back to scan") }
-        Text(device.name ?: "Unknown device", style = MaterialTheme.typography.headlineSmall)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+            }
+            Text("Developer tools", style = MaterialTheme.typography.headlineSmall)
+        }
         Text(
-            device.address,
-            style = MaterialTheme.typography.bodyMedium,
+            "${current.name ?: "Unknown device"} · ${current.address}",
+            style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
@@ -108,24 +102,14 @@ fun BackpackScreen(device: BleDevice, onBack: () -> Unit, modifier: Modifier = M
                     CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
 
                 is GattState.Ready -> {
-                    OutlinedButton(onClick = client::disconnect) { Text("Disconnect") }
-                    Button(
-                        onClick = {
-                            scope.launch {
-                                readingAll = true
-                                try {
-                                    client.readAllAndSubscribe()
-                                } finally {
-                                    readingAll = false
-                                }
-                            }
-                        },
-                        enabled = !readingAll,
-                    ) { Text(if (readingAll) "Reading…" else "Read all") }
+                    OutlinedButton(onClick = viewModel::disconnect) { Text("Disconnect") }
+                    Button(onClick = viewModel::readAll, enabled = !readingAll) {
+                        Text(if (readingAll) "Reading…" else "Read all")
+                    }
                 }
 
                 GattState.Disconnected, is GattState.Failed ->
-                    Button(onClick = { client.connect(device.address) }) { Text("Connect") }
+                    Button(onClick = viewModel::connect) { Text("Connect") }
             }
         }
         Spacer(Modifier.height(8.dp))
@@ -135,7 +119,7 @@ fun BackpackScreen(device: BleDevice, onBack: () -> Unit, modifier: Modifier = M
 
         Spacer(Modifier.height(8.dp))
         OutlinedButton(onClick = {
-            context.copyToClipboard(buildReport(device, ready, values, subscriptions, notifications, readingAll))
+            context.copyToClipboard(buildReport(current, ready, values, subscriptions, notifications, readingAll))
         }) { Text("Copy report") }
 
         Spacer(Modifier.height(16.dp))
@@ -145,7 +129,14 @@ fun BackpackScreen(device: BleDevice, onBack: () -> Unit, modifier: Modifier = M
         )
         LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
             item(key = "controls") {
-                ControlsSection(values = values, backpack = backpack)
+                ControlsSection(
+                    values = values,
+                    busy = busy,
+                    message = message,
+                    brightnessLimit = brightnessLimit,
+                    onSetBrightness = viewModel::setBrightness,
+                    onSendTestImage = viewModel::sendTestImage,
+                )
                 HorizontalDivider()
             }
             item(key = "notifications") {
@@ -157,9 +148,7 @@ fun BackpackScreen(device: BleDevice, onBack: () -> Unit, modifier: Modifier = M
                     service = service,
                     values = values,
                     subscriptions = subscriptions,
-                    onReadCharacteristic = { uuid ->
-                        scope.launch { runCatching { client.read(uuid) } }
-                    },
+                    onReadCharacteristic = viewModel::read,
                 )
                 HorizontalDivider()
             }
@@ -167,12 +156,16 @@ fun BackpackScreen(device: BleDevice, onBack: () -> Unit, modifier: Modifier = M
     }
 }
 
-private const val TEST_IMAGE_FRAME_MS = 1000
-
 /** Brightness slider and test-image upload. Disabled until the relevant values are read. */
 @Composable
-private fun ControlsSection(values: Map<UUID, CharacteristicReading>, backpack: PixBackpack) {
-    val scope = rememberCoroutineScope()
+private fun ControlsSection(
+    values: Map<UUID, CharacteristicReading>,
+    busy: Boolean,
+    message: String?,
+    brightnessLimit: Int,
+    onSetBrightness: (percent: Int) -> Unit,
+    onSendTestImage: (width: Int, height: Int, playOnce: Boolean) -> Unit,
+) {
     fun byteValue(uuid: UUID): Int? =
         (values[uuid] as? CharacteristicReading.Value)?.bytes?.firstOrNull()?.toInt()?.and(0xFF)
 
@@ -181,18 +174,17 @@ private fun ControlsSection(values: Map<UUID, CharacteristicReading>, backpack: 
     val width = byteValue(PixUuids.WIDTH)?.takeIf { it > 0 } ?: 16
     val height = byteValue(PixUuids.HEIGHT)?.takeIf { it > 0 } ?: 20
 
+    // Only held while the thumb is down; afterwards the slider follows the value read back.
     var draggingPercent by remember { mutableStateOf<Float?>(null) }
-    var busy by remember { mutableStateOf(false) }
-    // A static image doesn't need to loop. Looping a 1-frame animation restarts it every
-    // frame duration, which may be what causes the periodic flicker/dim on firmware 2.4.0.
-    var playOnce by remember { mutableStateOf(true) }
-    var message by remember { mutableStateOf<String?>(null) }
+    // A still image doesn't need to loop.
+    var playOnce by rememberSaveable { mutableStateOf(true) }
     val shownPercent = draggingPercent ?: rawBrightness?.let { PixBrightness.rawToPercent(it).toFloat() }
 
     Column(Modifier.padding(vertical = 12.dp)) {
         Text("Controls", style = MaterialTheme.typography.titleSmall)
 
-        val maxPercent = PixBrightness.MAX_SAFE_PERCENT
+        // Lower than the global maximum while a bright, white-heavy image is displayed.
+        val maxPercent = brightnessLimit
         val overMax = shownPercent != null && shownPercent > maxPercent + 0.5f
         Text(
             "Brightness: " + (shownPercent?.let { "${it.roundToInt()}%" } ?: "not read yet") +
@@ -204,55 +196,15 @@ private fun ControlsSection(values: Map<UUID, CharacteristicReading>, backpack: 
             value = (shownPercent ?: 0f).coerceAtMost(maxPercent.toFloat()),
             onValueChange = { draggingPercent = it },
             onValueChangeFinished = {
-                draggingPercent?.roundToInt()?.let { target ->
-                    scope.launch {
-                        busy = true
-                        message = "Setting brightness to $target%…"
-                        message = try {
-                            backpack.setBrightness(target)
-                            null
-                        } catch (e: GattException) {
-                            "Brightness failed: ${e.message}"
-                        } finally {
-                            draggingPercent = null
-                            busy = false
-                        }
-                    }
-                }
+                draggingPercent?.roundToInt()?.let(onSetBrightness)
+                draggingPercent = null
             },
             valueRange = 0f..maxPercent.toFloat(),
             enabled = rawBrightness != null && !busy,
         )
 
         Button(
-            onClick = {
-                scope.launch {
-                    busy = true
-                    message = try {
-                        val animation = PixAnimation(
-                            width = width,
-                            height = height,
-                            frames = listOf(pixTestPattern(width, height)),
-                            frameDurationsMs = listOf(TEST_IMAGE_FRAME_MS),
-                            direction = if (playOnce) PixDirection.NORMAL_STOP else PixDirection.NORMAL,
-                        )
-                        backpack.showAnimation(animation) { sent, total ->
-                            message = "Sending test image… $sent/$total"
-                        }
-                        if (playOnce) {
-                            "Test image sent (play once)."
-                        } else {
-                            "Test image sent (looping every ${TEST_IMAGE_FRAME_MS} ms)."
-                        }
-                    } catch (e: GattException) {
-                        "Test image failed: ${e.message}"
-                    } catch (e: IllegalArgumentException) {
-                        "Test image failed: ${e.message}"
-                    } finally {
-                        busy = false
-                    }
-                }
-            },
+            onClick = { onSendTestImage(width, height, playOnce) },
             enabled = !busy,
         ) { Text("Send test image (${width}×$height)") }
 
@@ -276,7 +228,7 @@ private fun NotificationLog(notifications: List<NotificationEntry>) {
         Text("Notifications (${notifications.size})", style = MaterialTheme.typography.titleSmall)
         if (notifications.isEmpty()) {
             Text(
-                "None yet. Press a button or change something on the backpack.",
+                "None yet. The backpack hasn't sent any.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

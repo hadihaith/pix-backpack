@@ -48,7 +48,24 @@ class PixProtocolTest {
         // The backpack read back 0x4C (76) after being set to 30 %.
         assertEquals(76, PixBrightness.percentToRaw(30))
         assertEquals(255, PixBrightness.percentToRaw(100))
-        assertEquals(29, PixBrightness.rawToPercent(76))
+        assertEquals(30, PixBrightness.rawToPercent(76))
+    }
+
+    @Test
+    fun brightnessPercentSurvivesRoundTrip() {
+        for (percent in 0..100) {
+            assertEquals(percent, PixBrightness.rawToPercent(PixBrightness.percentToRaw(percent)))
+        }
+    }
+
+    @Test
+    fun brightnessLimitScalesWithImageLoad() {
+        val max = PixBrightness.MAX_SAFE_PERCENT
+        assertEquals(max, PixBrightness.maxSafeFor(pixTestPattern(16, 20)))
+        assertEquals(max, PixBrightness.maxSafeFor(IntArray(320))) // all black
+        val white = PixBrightness.maxSafeFor(IntArray(320) { 0xFFFFFF })
+        // All-white draws more than the rainbow test pattern, so it gets a lower limit.
+        assert(white in 1 until max) { "white limit was $white" }
     }
 
     @Test
