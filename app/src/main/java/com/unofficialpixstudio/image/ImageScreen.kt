@@ -181,7 +181,7 @@ fun PictureScreen(viewModel: BackpackViewModel, modifier: Modifier = Modifier) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Preview", style = MaterialTheme.typography.titleMedium)
                     Text(
-                        "${PixelArt.distinctColors(preview)} colours · up to ${PixBrightness.maxSafeFor(preview)}% brightness",
+                        colourSummary(preview),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -298,4 +298,15 @@ private fun CropBox(
             drawLine(gridColor, Offset(0f, py), Offset(size.width, py))
         }
     }
+}
+
+/**
+ * "12 colours", plus a note when the picture is bright enough that brightness can't go all
+ * the way up (e.g. "12 colours · brightness up to 71%").
+ */
+fun colourSummary(pixels: IntArray): String {
+    val colours = PixelArt.distinctColors(pixels)
+    val text = if (colours == 1) "1 colour" else "$colours colours"
+    val limit = PixBrightness.maxUserPercentFor(pixels)
+    return if (limit < 100) "$text · brightness up to $limit%" else text
 }

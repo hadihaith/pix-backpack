@@ -59,13 +59,35 @@ class PixProtocolTest {
     }
 
     @Test
+    fun usersHundredPercentIsTheSafeMaximum() {
+        // 100 % in the app must never be brighter than the measured safe level (85 % real).
+        val safeRaw = PixBrightness.percentToRaw(PixBrightness.MAX_SAFE_PERCENT)
+        assertEquals(safeRaw, PixBrightness.userPercentToRaw(100))
+        assertEquals(100, PixBrightness.rawToUserPercent(safeRaw))
+        assertEquals(0, PixBrightness.userPercentToRaw(0))
+        assertEquals(safeRaw, PixBrightness.userPercentToRaw(150)) // clamped
+    }
+
+    @Test
+    fun userPercentSurvivesRoundTrip() {
+        for (percent in 0..100) {
+            assertEquals(percent, PixBrightness.rawToUserPercent(PixBrightness.userPercentToRaw(percent)))
+        }
+    }
+
+    @Test
+    fun brightnessAboveTheCapShowsAsHundredPercent() {
+        // E.g. set to full by another app.
+        assertEquals(100, PixBrightness.rawToUserPercent(255))
+    }
+
+    @Test
     fun brightnessLimitScalesWithImageLoad() {
-        val max = PixBrightness.MAX_SAFE_PERCENT
-        assertEquals(max, PixBrightness.maxSafeFor(pixTestPattern(16, 20)))
-        assertEquals(max, PixBrightness.maxSafeFor(IntArray(320))) // all black
-        val white = PixBrightness.maxSafeFor(IntArray(320) { 0xFFFFFF })
+        assertEquals(100, PixBrightness.maxUserPercentFor(pixTestPattern(16, 20)))
+        assertEquals(100, PixBrightness.maxUserPercentFor(IntArray(320))) // all black
+        val white = PixBrightness.maxUserPercentFor(IntArray(320) { 0xFFFFFF })
         // All-white draws more than the rainbow test pattern, so it gets a lower limit.
-        assert(white in 1 until max) { "white limit was $white" }
+        assert(white in 1 until 100) { "white limit was $white" }
     }
 
     @Test

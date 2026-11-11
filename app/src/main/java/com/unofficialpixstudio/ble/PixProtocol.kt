@@ -39,18 +39,38 @@ object PixBrightness {
     /** LED load of the test pattern, the image [MAX_SAFE_PERCENT] was measured with. */
     private val referenceLoad: Double by lazy { PixelArt.relativeLoad(pixTestPattern(16, 20)) }
 
-    /**
-     * Highest brightness that should stay steady for [pixels], assuming LED current scales with
-     * image load × brightness: brighter (whiter) images than the test pattern get a lower
-     * limit; darker ones still never exceed [MAX_SAFE_PERCENT].
+    /*
+     * The app shows brightness on a 0–100 % scale where 100 % is MAX_SAFE_PERCENT of the LEDs'
+     * real output, so users never see (or need to know about) the cap. Only the developer tools
+     * show real percentages. User percentages map straight to the raw byte, not via a real
+     * percentage, so every value survives a write/read-back round trip.
      */
-    fun maxSafeFor(pixels: IntArray): Int {
+
+    /** Raw-byte span of the users' scale: 100 % (user) = MAX_SAFE_PERCENT % of 255. */
+    private const val USER_SCALE = MAX_SAFE_PERCENT * 255
+
+    /** Users' 0–100 % to the raw byte for 0106. Floors, so 100 % is 216, never above the cap. */
+    fun userPercentToRaw(userPercent: Int): Int = userPercent.coerceIn(0, 100) * USER_SCALE / 10_000
+
+    /**
+     * Raw byte from 0106 to the users' 0–100 %. Rounds, so each user percentage reads back as
+     * itself; anything above the cap (set by another app) shows as 100 %.
+     */
+    fun rawToUserPercent(raw: Int): Int =
+        (((raw and 0xFF) * 10_000 + USER_SCALE / 2) / USER_SCALE).coerceAtMost(100)
+
+    /**
+     * Highest brightness, on the users' scale, that should stay steady for [pixels], assuming
+     * LED current scales with image load × brightness: brighter (whiter) images than the test
+     * pattern get less than 100 %; darker ones still get 100 %.
+     */
+    fun maxUserPercentFor(pixels: IntArray): Int {
         val load = PixelArt.relativeLoad(pixels)
-        if (load <= referenceLoad) return MAX_SAFE_PERCENT
-        return (MAX_SAFE_PERCENT * referenceLoad / load).toInt().coerceIn(1, MAX_SAFE_PERCENT)
+        if (load <= referenceLoad) return 100
+        return (100 * referenceLoad / load).toInt().coerceIn(1, 100)
     }
 
-    /** 0–100 % to the raw byte for characteristic 0106. */
+    /** Real 0–100 % of full LED output to the raw byte for 0106 (developer tools only). */
     fun percentToRaw(percent: Int): Int = percent.coerceIn(0, 100) * 255 / 100
 
     /**

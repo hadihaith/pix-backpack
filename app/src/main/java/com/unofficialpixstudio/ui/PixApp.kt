@@ -22,25 +22,31 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.unofficialpixstudio.animation.AnimationScreen
 import com.unofficialpixstudio.ble.BackpackViewModel
 import com.unofficialpixstudio.ble.BleScannerScreen
 import com.unofficialpixstudio.ble.DeveloperScreen
+import com.unofficialpixstudio.draw.DrawScreen
 import com.unofficialpixstudio.image.PictureScreen
 import com.unofficialpixstudio.ui.components.PixIcons
 import com.unofficialpixstudio.ui.home.HomeScreen
 import com.unofficialpixstudio.ui.options.OptionsScreen
 
-private enum class Tab(val label: String) { Home("Home"), Picture("Picture"), Options("Options") }
+private enum class Tab(val label: String) {
+    Home("Home"), Picture("Picture"), Draw("Draw"), Animate("Animate"), Options("Options")
+}
 
 private fun Tab.icon(): ImageVector = when (this) {
     Tab.Home -> Icons.Filled.Home
     Tab.Picture -> PixIcons.Heart
+    Tab.Draw -> PixIcons.Pencil
+    Tab.Animate -> PixIcons.Film
     Tab.Options -> Icons.Filled.Settings
 }
 
 /**
  * App shell. No backpack yet: the find-your-backpack screen. Otherwise: bottom navigation
- * with Home, Picture and Options; Developer tools open full-screen from Options.
+ * with Home, Picture, Draw, Animate and Options; Developer tools open full-screen from Options.
  */
 @Composable
 fun PixApp(viewModel: BackpackViewModel = viewModel()) {
@@ -96,8 +102,16 @@ fun PixApp(viewModel: BackpackViewModel = viewModel()) {
     ) { padding ->
         val content = Modifier.padding(padding)
         when (tab) {
-            Tab.Home -> HomeScreen(viewModel, onOpenPicture = { tab = Tab.Picture }, modifier = content)
+            Tab.Home -> HomeScreen(
+                viewModel,
+                onOpenPicture = { tab = Tab.Picture },
+                onOpenDraw = { tab = Tab.Draw },
+                onOpenAnimations = { tab = Tab.Animate },
+                modifier = content,
+            )
             Tab.Picture -> PictureScreen(viewModel, modifier = content)
+            Tab.Draw -> DrawScreen(viewModel, modifier = content)
+            Tab.Animate -> AnimationScreen(viewModel, modifier = content)
             Tab.Options -> OptionsScreen(viewModel, onOpenDeveloper = { developerOpen = true }, modifier = content)
         }
     }

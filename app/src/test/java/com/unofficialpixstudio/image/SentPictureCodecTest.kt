@@ -2,9 +2,12 @@ package com.unofficialpixstudio.image
 
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.io.DataOutputStream
 import java.io.IOException
 
 class SentPictureCodecTest {
@@ -22,6 +25,41 @@ class SentPictureCodecTest {
         assertEquals(20, restored.height)
         assertEquals(original.sentAtMillis, restored.sentAtMillis)
         assertArrayEquals(pixels, restored.pixels)
+    }
+
+    @Test
+    fun animationRoundTrip() {
+        val frames = List(3) { f -> IntArray(4) { (f * 0x101010 + it) and 0xFFFFFF } }
+        val original = SentPicture("AA:BB", 2, 2, frames, frameMs = 60, sentAtMillis = 5)
+        assertTrue(original.isAnimation)
+
+        val bytes = ByteArrayOutputStream().also { SentPictureCodec.write(original, it) }.toByteArray()
+        val restored = SentPictureCodec.read(ByteArrayInputStream(bytes))
+
+        assertEquals(60, restored.frameMs)
+        assertEquals(3, restored.frames.size)
+        for (i in frames.indices) assertArrayEquals(frames[i], restored.frames[i])
+        assertArrayEquals(frames[0], restored.pixels)
+    }
+
+    @Test
+    fun readsPicturesSavedByOlderVersions() {
+        // Version 1 had no frame time or frame count: one picture straight after the header.
+        val bytes = ByteArrayOutputStream().also { stream ->
+            DataOutputStream(stream).apply {
+                writeInt(0x50495853)
+                writeByte(1)
+                writeUTF("AA:BB")
+                writeShort(1)
+                writeShort(2)
+                writeLong(7)
+                write(byteArrayOf(0x12, 0x34, 0x56, 0x0A, 0x0B, 0x0C))
+            }
+        }.toByteArray()
+        val restored = SentPictureCodec.read(ByteArrayInputStream(bytes))
+        assertFalse(restored.isAnimation)
+        assertEquals(7, restored.sentAtMillis)
+        assertArrayEquals(intArrayOf(0x123456, 0x0A0B0C), restored.pixels)
     }
 
     @Test(expected = IOException::class)

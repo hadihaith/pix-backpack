@@ -6,12 +6,12 @@ class PixBackpack(private val client: PixGattClient) {
     private val encoder = PixCommandEncoder()
 
     /**
-     * Writes brightness to 0106, capped at [PixBrightness.MAX_SAFE_PERCENT], and reads it back
-     * so [PixGattClient.values] updates.
+     * Writes brightness to 0106 and reads it back so [PixGattClient.values] updates.
+     * [userPercent] is on the app's 0–100 % scale, whose 100 % is the safe maximum
+     * ([PixBrightness.userPercentToRaw]), so it can't go above the cap.
      */
-    suspend fun setBrightness(percent: Int) {
-        val safe = percent.coerceIn(0, PixBrightness.MAX_SAFE_PERCENT)
-        client.write(PixUuids.BRIGHTNESS, byteArrayOf(PixBrightness.percentToRaw(safe).toByte()))
+    suspend fun setBrightness(userPercent: Int) {
+        client.write(PixUuids.BRIGHTNESS, byteArrayOf(PixBrightness.userPercentToRaw(userPercent).toByte()))
         client.read(PixUuids.BRIGHTNESS)
     }
 

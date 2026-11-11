@@ -178,17 +178,21 @@ private fun ControlsSection(
     var draggingPercent by remember { mutableStateOf<Float?>(null) }
     // A still image doesn't need to loop.
     var playOnce by rememberSaveable { mutableStateOf(true) }
-    val shownPercent = draggingPercent ?: rawBrightness?.let { PixBrightness.rawToPercent(it).toFloat() }
+    // The slider uses the app's 0–100 % scale like the Home tab; the text also shows the real
+    // LED output, which users never see (100 % in the app is MAX_SAFE_PERCENT of full power).
+    val shownPercent = draggingPercent ?: rawBrightness?.let { PixBrightness.rawToUserPercent(it).toFloat() }
+    val shownRaw = draggingPercent?.let { PixBrightness.userPercentToRaw(it.roundToInt()) } ?: rawBrightness
 
     Column(Modifier.padding(vertical = 12.dp)) {
         Text("Controls", style = MaterialTheme.typography.titleSmall)
 
-        // Lower than the global maximum while a bright, white-heavy image is displayed.
+        // Lower than 100 % while a bright, white-heavy image is displayed.
         val maxPercent = brightnessLimit
-        val overMax = shownPercent != null && shownPercent > maxPercent + 0.5f
+        val overMax = shownRaw != null && shownRaw > PixBrightness.userPercentToRaw(maxPercent)
         Text(
             "Brightness: " + (shownPercent?.let { "${it.roundToInt()}%" } ?: "not read yet") +
-                if (overMax) " (above the $maxPercent% limit; may flicker)" else "",
+                (shownRaw?.let { " (real output ${PixBrightness.rawToPercent(it)}%, raw $it)" } ?: "") +
+                if (overMax) " – above the safe limit; may flicker" else "",
             style = MaterialTheme.typography.bodyMedium,
             color = if (overMax) MaterialTheme.colorScheme.error else Color.Unspecified,
         )

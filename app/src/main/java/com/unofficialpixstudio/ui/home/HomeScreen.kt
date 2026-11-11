@@ -35,7 +35,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.unofficialpixstudio.ble.BackpackViewModel
 import com.unofficialpixstudio.ble.GattState
-import com.unofficialpixstudio.ble.PixBrightness
+import com.unofficialpixstudio.ui.components.AnimatedLedDisplay
 import com.unofficialpixstudio.ui.components.ConnectionLook
 import com.unofficialpixstudio.ui.components.ConnectionPill
 import com.unofficialpixstudio.ui.components.LedDisplay
@@ -46,7 +46,13 @@ import kotlin.math.roundToInt
 
 /** Landing tab: connection status, what's on the backpack, brightness and quick actions. */
 @Composable
-fun HomeScreen(viewModel: BackpackViewModel, onOpenPicture: () -> Unit, modifier: Modifier = Modifier) {
+fun HomeScreen(
+    viewModel: BackpackViewModel,
+    onOpenPicture: () -> Unit,
+    onOpenDraw: () -> Unit,
+    onOpenAnimations: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val device by viewModel.device.collectAsState()
     val state by viewModel.connectionState.collectAsState()
     val displaySize by viewModel.displaySize.collectAsState()
@@ -84,12 +90,22 @@ fun HomeScreen(viewModel: BackpackViewModel, onOpenPicture: () -> Unit, modifier
         PixCard(title = "On your backpack") {
             val picture = nowShowing
             Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-                LedDisplay(
-                    pixels = picture?.pixels,
-                    width = picture?.width ?: displaySize.width,
-                    height = picture?.height ?: displaySize.height,
-                    modifier = Modifier.fillMaxWidth(0.62f),
-                )
+                if (picture != null && picture.isAnimation) {
+                    AnimatedLedDisplay(
+                        frames = picture.frames,
+                        width = picture.width,
+                        height = picture.height,
+                        frameMs = picture.frameMs,
+                        modifier = Modifier.fillMaxWidth(0.62f),
+                    )
+                } else {
+                    LedDisplay(
+                        pixels = picture?.pixels,
+                        width = picture?.width ?: displaySize.width,
+                        height = picture?.height ?: displaySize.height,
+                        modifier = Modifier.fillMaxWidth(0.62f),
+                    )
+                }
                 Spacer(Modifier.height(12.dp))
                 if (picture == null) {
                     Text(
@@ -118,6 +134,7 @@ fun HomeScreen(viewModel: BackpackViewModel, onOpenPicture: () -> Unit, modifier
         BrightnessCard(
             percent = brightness,
             limit = brightnessLimit,
+            showing = if (nowShowing?.isAnimation == true) "animation" else "picture",
             enabled = connected && brightness != null && !busy,
             onChange = viewModel::setBrightness,
         )
@@ -133,15 +150,24 @@ fun HomeScreen(viewModel: BackpackViewModel, onOpenPicture: () -> Unit, modifier
                 modifier = Modifier.weight(1f),
             )
             ActionCard(
-                title = "Animated GIF",
-                subtitle = "Coming soon",
-                icon = PixIcons.Film,
-                container = MaterialTheme.colorScheme.surfaceContainerHigh,
-                content = MaterialTheme.colorScheme.onSurfaceVariant,
-                onClick = null,
+                title = "Draw",
+                subtitle = "Paint it pixel by pixel",
+                icon = PixIcons.Pencil,
+                container = MaterialTheme.colorScheme.primaryContainer,
+                content = MaterialTheme.colorScheme.onPrimaryContainer,
+                onClick = onOpenDraw,
                 modifier = Modifier.weight(1f),
             )
         }
+        ActionCard(
+            title = "Animations",
+            subtitle = "Ready-made moving patterns, at your speed",
+            icon = PixIcons.Film,
+            container = MaterialTheme.colorScheme.tertiaryContainer,
+            content = MaterialTheme.colorScheme.onTertiaryContainer,
+            onClick = onOpenAnimations,
+            modifier = Modifier.fillMaxWidth(),
+        )
 
         message?.let {
             Text(
@@ -181,7 +207,7 @@ private fun OfflineCard(state: GattState, onReconnect: () -> Unit) {
 }
 
 @Composable
-private fun BrightnessCard(percent: Int?, limit: Int, enabled: Boolean, onChange: (Int) -> Unit) {
+private fun BrightnessCard(percent: Int?, limit: Int, showing: String, enabled: Boolean, onChange: (Int) -> Unit) {
     // Only held while dragging; afterwards the slider follows the value read back.
     var dragging by remember { mutableStateOf<Float?>(null) }
     val shown = dragging ?: percent?.toFloat()
@@ -194,22 +220,24 @@ private fun BrightnessCard(percent: Int?, limit: Int, enabled: Boolean, onChange
                 style = MaterialTheme.typography.headlineSmall,
             )
         }
+        // Always a 0–100 % bar; a very bright picture or animation stops the thumb short of 100 %.
         Slider(
             value = (shown ?: 0f).coerceAtMost(limit.toFloat()),
-            onValueChange = { dragging = it },
+            onValueChange = { dragging = it.coerceAtMost(limit.toFloat()) },
             onValueChangeFinished = {
                 dragging?.roundToInt()?.let(onChange)
                 dragging = null
             },
-            valueRange = 0f..limit.toFloat(),
+            valueRange = 0f..100f,
             enabled = enabled,
         )
-        val note = when {
-            limit < PixBrightness.MAX_SAFE_PERCENT ->
-                "Limited to $limit% for this picture so the LEDs don't flicker."
-            else -> "Capped at $limit% so the LEDs don't flicker."
+        if (limit < 100) {
+            Text(
+                "This $showing is very bright, so brightness goes up to $limit%.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
-        Text(note, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 

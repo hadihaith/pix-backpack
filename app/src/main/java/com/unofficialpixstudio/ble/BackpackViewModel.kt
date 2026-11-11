@@ -58,9 +58,12 @@ class BackpackViewModel(application: Application) : AndroidViewModel(application
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, DisplaySize(16, 20))
 
-    /** Current brightness in percent, or null until read. */
+    /**
+     * Current brightness on the app's 0–100 % scale (100 % is the safe maximum, see
+     * [PixBrightness.userPercentToRaw]), or null until read.
+     */
     val brightnessPercent: StateFlow<Int?> = client.values
-        .map { values -> values.byteValue(PixUuids.BRIGHTNESS)?.let(PixBrightness::rawToPercent) }
+        .map { values -> values.byteValue(PixUuids.BRIGHTNESS)?.let(PixBrightness::rawToUserPercent) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     /** Firmware and hardware revision strings from the Device Information service. */
@@ -76,8 +79,8 @@ class BackpackViewModel(application: Application) : AndroidViewModel(application
     val device: StateFlow<BleDevice?> = _device.asStateFlow()
 
     /**
-     * The last picture this phone sent to the current backpack, saved to storage so it's still
-     * shown after the app restarts. The backpack can't report its screen, so this may be stale
+     * The last picture or animation this phone sent to the current backpack, saved to storage
+     * so it's still shown after the app restarts. The backpack can't report its screen, so this may be stale
      * if it was power-cycled or something else sent a picture since.
      */
     val nowShowing: StateFlow<SentPicture?> = combine(_lastSent, _device) { picture, device ->
@@ -91,10 +94,10 @@ class BackpackViewModel(application: Application) : AndroidViewModel(application
     /** True while a write action (brightness, upload) is running. */
     val busy: StateFlow<Boolean> = _busy.asStateFlow()
 
-    private val _brightnessLimit = MutableStateFlow(PixBrightness.MAX_SAFE_PERCENT)
+    private val _brightnessLimit = MutableStateFlow(100)
     /**
-     * Highest brightness the slider allows for what's currently on the display; lower for
-     * bright, white-heavy images (see [PixBrightness.maxSafeFor]).
+     * Highest brightness (0–100 % scale) the slider allows for what's currently on the
+     * display: 100 %, or lower for bright, white-heavy images (see [PixBrightness.maxUserPercentFor]).
      */
     val brightnessLimit: StateFlow<Int> = _brightnessLimit.asStateFlow()
 
@@ -194,7 +197,7 @@ class BackpackViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun setBrightness(percent: Int) {
-        val target = percent.coerceAtMost(_brightnessLimit.value)
+        val target = percent.coerceIn(0, _brightnessLimit.value)
         runAction("Setting brightness to $target%…") {
             backpack.setBrightness(target)
             null
@@ -202,43 +205,65 @@ class BackpackViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun sendTestImage(width: Int, height: Int, playOnce: Boolean) =
-        sendStill("test image", pixTestPattern(width, height), width, height, playOnce)
+        send(
+            label = "test image",
+            frames = listOf(pixTestPattern(width, height)),
+            width = width,
+            height = height,
+            frameMs = STILL_FRAME_MS,
+            direction = if (playOnce) PixDirection.NORMAL_STOP else PixDirection.NORMAL,
+        )
 
     /** Sends a still picture (any colours; reduced to the 256-colour palette here). */
     fun sendImage(pixels: IntArray, width: Int, height: Int) =
-        sendStill("image", PixelArt.quantize(pixels), width, height, playOnce = true)
+        send("image", listOf(PixelArt.quantize(pixels)), width, height, STILL_FRAME_MS, PixDirection.NORMAL_STOP)
 
     /**
-     * Uploads one frame. If the current brightness is above what this image can show without
-     * flicker, lowers it first, and caps the slider for as long as it's displayed.
+     * Sends [frames] to play in a loop, each shown for [frameMs] milliseconds. Together the
+     * frames must use no more than 256 colours.
      */
-    private fun sendStill(label: String, pixels: IntArray, width: Int, height: Int, playOnce: Boolean) =
-        runAction("Sending $label…") {
-            val limit = PixBrightness.maxSafeFor(pixels)
-            val current = currentBrightnessPercent()
-            var note = ""
-            if (current == null || current > limit) {
-                _message.value = "Lowering brightness to $limit% for this $label…"
-                backpack.setBrightness(limit)
-                note = " Brightness set to $limit% to avoid flicker."
-            }
-            _brightnessLimit.value = limit
+    fun sendAnimation(frames: List<IntArray>, width: Int, height: Int, frameMs: Int) =
+        send("animation", frames, width, height, frameMs, PixDirection.NORMAL)
 
-            val animation = PixAnimation(
-                width = width,
-                height = height,
-                frames = listOf(pixels),
-                frameDurationsMs = listOf(STILL_FRAME_MS),
-                direction = if (playOnce) PixDirection.NORMAL_STOP else PixDirection.NORMAL,
-            )
-            backpack.showAnimation(animation) { sent, total ->
-                _message.value = "Sending $label… $sent/$total"
-            }
-            _device.value?.let { device ->
-                rememberSent(SentPicture(device.address, width, height, pixels, System.currentTimeMillis()))
-            }
-            "Sent the $label.$note"
+    /**
+     * Uploads [frames]. If the current brightness is above what the brightest frame can show
+     * without flicker, lowers it first, and caps the slider for as long as it's displayed.
+     * Messages use the app's 0–100 % scale and don't explain the cap; users don't need to
+     * know it.
+     */
+    private fun send(
+        label: String,
+        frames: List<IntArray>,
+        width: Int,
+        height: Int,
+        frameMs: Int,
+        direction: Int,
+    ) = runAction("Sending $label…") {
+        val animation = PixAnimation(
+            width = width,
+            height = height,
+            frames = frames,
+            frameDurationsMs = List(frames.size) { frameMs },
+            direction = direction,
+        )
+        val limit = frames.minOf(PixBrightness::maxUserPercentFor)
+        val current = currentBrightnessPercent()
+        var note = ""
+        if (current == null || current > limit) {
+            _message.value = "Setting brightness to $limit% for this $label…"
+            backpack.setBrightness(limit)
+            if (current != null) note = " Brightness lowered to $limit% for this $label."
         }
+        _brightnessLimit.value = limit
+
+        backpack.showAnimation(animation) { sent, total ->
+            _message.value = "Sending $label… $sent/$total"
+        }
+        _device.value?.let { device ->
+            rememberSent(SentPicture(device.address, width, height, frames, frameMs, System.currentTimeMillis()))
+        }
+        "Sent the $label.$note"
+    }
 
     private fun currentBrightnessPercent(): Int? = brightnessPercent.value
 

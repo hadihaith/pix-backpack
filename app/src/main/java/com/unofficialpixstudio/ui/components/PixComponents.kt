@@ -20,6 +20,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -76,6 +79,84 @@ object PixIcons {
         )
     }
 
+    val Pencil: ImageVector by lazy {
+        pixelIcon(
+            "PixPencil",
+            ".....XX",
+            "....XXX",
+            "...XXX.",
+            "..XXX..",
+            ".XXX...",
+            "X.X....",
+            "XX.....",
+        )
+    }
+
+    val Eraser: ImageVector by lazy {
+        pixelIcon(
+            "PixEraser",
+            "...XXXX",
+            "..X.XXX",
+            ".X...XX",
+            "X...XX.",
+            ".X.XX..",
+            "..XX...",
+            ".......",
+        )
+    }
+
+    val Bucket: ImageVector by lazy {
+        pixelIcon(
+            "PixBucket",
+            ".X.....",
+            "X.X....",
+            "X..X...",
+            "X...X..",
+            "XXXXXX.",
+            ".XXXX.X",
+            "..XX..X",
+        )
+    }
+
+    val Dropper: ImageVector by lazy {
+        pixelIcon(
+            "PixDropper",
+            ".....XX",
+            "....XXX",
+            "...XXXX",
+            "..X.X..",
+            ".X.X...",
+            "X.X....",
+            "X......",
+        )
+    }
+
+    val Mirror: ImageVector by lazy {
+        pixelIcon(
+            "PixMirror",
+            "...X...",
+            "X.....X",
+            "XX.X.XX",
+            "XXX.XXX",
+            "XX.X.XX",
+            "X.....X",
+            "...X...",
+        )
+    }
+
+    private val undoRows = arrayOf(
+        ".X.....",
+        "XXXXXX.",
+        ".X....X",
+        "......X",
+        ".....X.",
+        "..XXX..",
+    )
+
+    val Undo: ImageVector by lazy { pixelIcon("PixUndo", *undoRows) }
+
+    val Redo: ImageVector by lazy { pixelIcon("PixRedo", *Array(undoRows.size) { undoRows[it].reversed() }) }
+
     private fun pixelIcon(name: String, vararg rows: String): ImageVector {
         val columns = rows.maxOf { it.length }
         val cell = 20f / max(columns, rows.size)
@@ -129,6 +210,37 @@ fun LedDisplay(pixels: IntArray?, width: Int, height: Int, modifier: Modifier = 
             }
         }
     }
+}
+
+/**
+ * Which frame to show right now when [frameCount] frames loop with [frameMs] milliseconds
+ * each. Changing [frameMs] carries on from the current frame instead of starting over, so the
+ * preview doesn't jump while a speed slider is dragged.
+ */
+@Composable
+fun rememberLoopFrame(frameCount: Int, frameMs: Int): Int {
+    val currentFrameMs by rememberUpdatedState(frameMs)
+    val frame by produceState(0, frameCount) {
+        value = 0
+        if (frameCount <= 1) return@produceState
+        var position = 0.0
+        var last = withFrameNanos { it }
+        while (true) {
+            withFrameNanos { now ->
+                position = (position + (now - last) / 1e6 / currentFrameMs.coerceAtLeast(1)) % frameCount
+                last = now
+                value = position.toInt().coerceIn(0, frameCount - 1)
+            }
+        }
+    }
+    return frame.coerceIn(0, (frameCount - 1).coerceAtLeast(0))
+}
+
+/** [LedDisplay] playing [frames] in a loop, [frameMs] milliseconds each. */
+@Composable
+fun AnimatedLedDisplay(frames: List<IntArray>, width: Int, height: Int, frameMs: Int, modifier: Modifier = Modifier) {
+    val frame = rememberLoopFrame(frames.size, frameMs)
+    LedDisplay(frames.getOrNull(frame), width, height, modifier)
 }
 
 enum class ConnectionLook { Connected, Busy, Offline }
