@@ -72,6 +72,7 @@ import com.unofficialpixstudio.ble.GattState
 import com.unofficialpixstudio.image.colourSummary
 import com.unofficialpixstudio.ui.components.PixCard
 import com.unofficialpixstudio.ui.components.PixIcons
+import com.unofficialpixstudio.ui.components.SendProgress
 import com.unofficialpixstudio.ui.theme.LedOff
 import com.unofficialpixstudio.ui.theme.LedPanel
 import kotlin.math.floor
@@ -230,6 +231,7 @@ private fun DrawEditor(
     val displaySize by backpack.displaySize.collectAsState()
     val busy by backpack.busy.collectAsState()
     val message by backpack.message.collectAsState()
+    val sendProgress by backpack.sendProgress.collectAsState()
     val lastSent by backpack.nowShowing.collectAsState()
     val canvas by draw.canvas.collectAsState()
     val tool by draw.tool.collectAsState()
@@ -343,17 +345,22 @@ private fun DrawEditor(
             ) { Text(if (busy) "Sending…" else "Send to backpack") }
         }
         val summary = remember(canvas) { colourSummary(canvas.pixels) }
-        Text(
-            when {
-                !ready -> "Backpack not connected."
-                message != null -> message.orEmpty()
-                else -> summary
-            },
-            style = MaterialTheme.typography.bodySmall,
-            color = if (!ready) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
-            maxLines = 1,
-        )
+        val progress = sendProgress
+        if (ready && progress != null) {
+            SendProgress(progress, Modifier.padding(top = 6.dp))
+        } else {
+            Text(
+                when {
+                    !ready -> "Backpack not connected."
+                    message != null -> message.orEmpty()
+                    else -> summary
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = if (!ready) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                maxLines = 1,
+            )
+        }
     }
 
     if (pickingColor) {

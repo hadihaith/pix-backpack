@@ -1,6 +1,9 @@
 package com.unofficialpixstudio.ui.components
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -10,12 +13,15 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -31,6 +37,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.unofficialpixstudio.ble.GattState
 import com.unofficialpixstudio.ui.theme.LedOff
@@ -38,6 +46,7 @@ import com.unofficialpixstudio.ui.theme.LedPanel
 import com.unofficialpixstudio.ui.theme.StatusBusy
 import com.unofficialpixstudio.ui.theme.StatusConnected
 import kotlin.math.max
+import kotlin.math.roundToInt
 
 /** Pixel-art icons, in keeping with the LED display. Drawn from simple 'X' grids. */
 object PixIcons {
@@ -76,6 +85,19 @@ object PixIcons {
             "X.....X",
             "XXXXXXX",
             "X.XXX.X",
+        )
+    }
+
+    val Star: ImageVector by lazy {
+        pixelIcon(
+            "PixStar",
+            "...X...",
+            "..XXX..",
+            "XXXXXXX",
+            ".XXXXX.",
+            ".XXXXX.",
+            "XXX.XXX",
+            "X.....X",
         )
     }
 
@@ -282,6 +304,40 @@ fun ConnectionPill(state: GattState, modifier: Modifier = Modifier, onClick: (()
     ) {
         Box(Modifier.size(8.dp).clip(CircleShape).background(dot))
         Text(state.shortLabel(), style = MaterialTheme.typography.labelLarge)
+    }
+}
+
+/**
+ * How far a picture or animation has got on its way to the backpack: a bar that fills and the
+ * percentage beside it. [progress] is 0–1 and arrives in steps, one per packet; the bar and
+ * the number glide between them rather than jumping.
+ */
+@Composable
+fun SendProgress(progress: Float, modifier: Modifier = Modifier) {
+    val shown by animateFloatAsState(
+        targetValue = progress.coerceIn(0f, 1f),
+        animationSpec = tween(durationMillis = 250, easing = LinearEasing),
+        label = "send progress",
+    )
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        LinearProgressIndicator(
+            progress = { shown },
+            modifier = Modifier.weight(1f).height(6.dp),
+            drawStopIndicator = {},
+        )
+        Text(
+            "${(shown * 100).roundToInt()}%",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.End,
+            // Wide enough for "100%", so the bar doesn't change length as digits are added;
+            // the bar already announces the same number to screen readers.
+            modifier = Modifier.widthIn(min = 40.dp).clearAndSetSemantics {},
+        )
     }
 }
 

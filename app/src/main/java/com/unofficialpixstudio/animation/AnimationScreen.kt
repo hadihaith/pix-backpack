@@ -1,7 +1,7 @@
 package com.unofficialpixstudio.animation
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,10 +12,19 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.selection.selectable
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyGridState
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
@@ -26,8 +35,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
@@ -37,41 +44,168 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.unofficialpixstudio.ble.BackpackViewModel
 import com.unofficialpixstudio.ble.GattState
 import com.unofficialpixstudio.ui.components.AnimatedLedDisplay
+import com.unofficialpixstudio.ui.components.SendProgress
 import kotlin.math.ln
 import kotlin.math.pow
 import kotlin.math.roundToInt
 
 /**
- * Animate tab: pick a ready-made animation, watch it play exactly as the LEDs will show it,
- * set how many milliseconds each frame lasts, and send it to the backpack.
+ * Animate tab. It opens on every ready-made animation, two to a row, each playing as the LEDs
+ * will show it. Tapping one opens its own page, to set how long each frame lasts and send it
+ * to the backpack.
  */
 @Composable
 fun AnimationScreen(
     backpack: BackpackViewModel,
     modifier: Modifier = Modifier,
     animations: AnimationViewModel = viewModel(),
+    cache: FrameCache = viewModel(),
+) {
+    val displaySize by backpack.displaySize.collectAsState()
+    // Kept out here so coming back from an animation's page returns to the same place in the list.
+    val gallery = rememberLazyGridState()
+
+    val open = animations.open
+    if (open == null) {
+        AnimationGallery(displaySize.width, displaySize.height, animations, cache, gallery, modifier)
+    } else {
+        BackHandler { animations.close() }
+        AnimationPage(open, backpack, displaySize.width, displaySize.height, animations, cache, modifier)
+    }
+}
+
+/** Every animation, two to a row. */
+@Composable
+private fun AnimationGallery(
+    width: Int,
+    height: Int,
+    animations: AnimationViewModel,
+    cache: FrameCache,
+    state: LazyGridState,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(horizontal = 20.dp)
+            .padding(top = 16.dp)
+    ) {
+        Text("Animations", style = MaterialTheme.typography.headlineLarge)
+        Text(
+            "${AnimationPresets.all.size} to pick from. Tap one to set its speed and send it.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(12.dp))
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(2),
+            state = state,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            contentPadding = PaddingValues(bottom = 16.dp),
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            items(AnimationPresets.all, key = { it.id }) { preset ->
+                AnimationTile(
+                    title = preset.name,
+                    subtitle = preset.description,
+                    frames = cache.framesOf(preset, width, height),
+                    width = width,
+                    height = height,
+                    frameMs = animations.frameMs(preset),
+                    onClick = { animations.open(preset) },
+                )
+            }
+        }
+    }
+}
+
+/**
+ * A card with an animation playing on top and its name and a line about it below. The LEDs
+ * stay off while [frames] is null, which is the moment it takes to draw them.
+ */
+@Composable
+fun AnimationTile(
+    title: String,
+    subtitle: String,
+    frames: List<IntArray>?,
+    width: Int,
+    height: Int,
+    frameMs: Int,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+) {
+    val container = MaterialTheme.colorScheme.surfaceContainerLow
+    Card(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier,
+        shape = MaterialTheme.shapes.large,
+        // Looks the same when it can't be tapped; whatever disables it says why elsewhere.
+        colors = CardDefaults.cardColors(containerColor = container, disabledContainerColor = container),
+    ) {
+        Column(Modifier.padding(12.dp)) {
+            AnimatedLedDisplay(frames.orEmpty(), width, height, frameMs, Modifier.fillMaxWidth())
+            Text(
+                title,
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 8.dp),
+            )
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                minLines = 2, // so tiles in a row are the same height whether or not the text wraps
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+/** One animation's own page: a large preview, its speed, and the button to send it. */
+@Composable
+private fun AnimationPage(
+    preset: AnimationPreset,
+    backpack: BackpackViewModel,
+    width: Int,
+    height: Int,
+    animations: AnimationViewModel,
+    cache: FrameCache,
+    modifier: Modifier = Modifier,
 ) {
     val connection by backpack.connectionState.collectAsState()
-    val displaySize by backpack.displaySize.collectAsState()
     val busy by backpack.busy.collectAsState()
     val message by backpack.message.collectAsState()
-    val width = displaySize.width
-    val height = displaySize.height
-
-    val preset = animations.selected
+    val sendProgress by backpack.sendProgress.collectAsState()
     val frameMs = animations.frameMs(preset)
-    val frames = animations.frames(preset, width, height)
+    val frames = cache.framesOf(preset, width, height)
 
     Column(
         modifier = modifier
             .fillMaxSize()
             .padding(horizontal = 20.dp, vertical = 16.dp)
     ) {
-        Text("Animations", style = MaterialTheme.typography.headlineLarge)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = animations::close) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "All animations")
+            }
+            Text(
+                preset.name,
+                style = MaterialTheme.typography.headlineSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f).padding(start = 4.dp),
+            )
+        }
 
         Spacer(Modifier.height(12.dp))
         Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-            AnimatedLedDisplay(frames, width, height, frameMs)
+            AnimatedLedDisplay(frames.orEmpty(), width, height, frameMs)
         }
 
         Spacer(Modifier.height(10.dp))
@@ -84,82 +218,39 @@ fun AnimationScreen(
         )
 
         Spacer(Modifier.height(12.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            for (option in AnimationPresets.all) {
-                PresetTile(
-                    name = option.name,
-                    frames = animations.frames(option, width, height),
-                    width = width,
-                    height = height,
-                    frameMs = animations.frameMs(option),
-                    selected = option.id == preset.id,
-                    onClick = { animations.select(option) },
-                    modifier = Modifier.weight(1f),
-                )
-            }
-        }
-
-        Spacer(Modifier.height(12.dp))
         FrameTimeCard(
             frameMs = frameMs,
             defaultMs = preset.defaultFrameMs,
-            frameCount = frames.size,
+            frameCount = frames?.size ?: 0,
             onChange = { animations.setFrameMs(preset, it) },
         )
 
         Spacer(Modifier.height(16.dp))
         val ready = connection is GattState.Ready
         Button(
-            onClick = { backpack.sendAnimation(frames, width, height, frameMs) },
-            enabled = ready && !busy,
+            onClick = { if (frames != null) backpack.sendAnimation(frames, width, height, frameMs) },
+            enabled = ready && !busy && frames != null,
             modifier = Modifier.fillMaxWidth(),
             contentPadding = PaddingValues(vertical = 12.dp),
         ) { Text(if (busy) "Sending…" else "Send to backpack") }
-        Text(
-            when {
-                !ready -> "Backpack not connected."
-                message != null -> message.orEmpty()
-                else -> "${preset.name} · ${frames.size} frames"
-            },
-            style = MaterialTheme.typography.bodySmall,
-            color = if (!ready) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
-}
-
-/** A small playing preview with the preset's name under it; outlined when it's the chosen one. */
-@Composable
-private fun PresetTile(
-    name: String,
-    frames: List<IntArray>,
-    width: Int,
-    height: Int,
-    frameMs: Int,
-    selected: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val shape = RoundedCornerShape(14.dp)
-    Column(
-        modifier = modifier
-            .clip(shape)
-            .selectable(selected = selected, role = Role.RadioButton, onClick = onClick)
-            .border(2.dp, if (selected) MaterialTheme.colorScheme.primary else Color.Transparent, shape)
-            .padding(4.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        AnimatedLedDisplay(frames, width, height, frameMs)
-        Text(
-            name,
-            style = MaterialTheme.typography.labelSmall,
-            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(top = 4.dp, bottom = 2.dp),
-        )
+        val progress = sendProgress
+        if (ready && progress != null) {
+            SendProgress(progress, Modifier.padding(top = 6.dp))
+        } else {
+            Text(
+                when {
+                    !ready -> "Backpack not connected."
+                    message != null -> message.orEmpty()
+                    frames != null -> "${preset.name} · ${frames.size} frames"
+                    else -> ""
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = if (!ready) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 
@@ -204,7 +295,7 @@ private fun FrameTimeCard(frameMs: Int, defaultMs: Int, frameCount: Int, onChang
             }
         }
         Text(
-            "Shorter is faster · one loop takes ${seconds(frameMs * frameCount)}",
+            if (frameCount > 0) "Shorter is faster · one loop takes ${seconds(frameMs * frameCount)}" else "Shorter is faster",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

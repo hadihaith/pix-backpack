@@ -2,6 +2,7 @@ package com.unofficialpixstudio.ble
 
 import android.app.Application
 import android.content.Context
+import android.os.SystemClock
 import android.util.AtomicFile
 import androidx.core.content.edit
 import androidx.lifecycle.AndroidViewModel
@@ -102,8 +103,21 @@ class BackpackViewModel(application: Application) : AndroidViewModel(application
     val brightnessLimit: StateFlow<Int> = _brightnessLimit.asStateFlow()
 
     private val _message = MutableStateFlow<String?>(null)
-    /** Progress or result of the last write action. */
+    /** What the current write action is doing, or the result of the last one. */
     val message: StateFlow<String?> = _message.asStateFlow()
+
+    /** Milliseconds a packet took in the last upload; a guess until there has been one. */
+    private var packetMs = 45f
+
+    /**
+     * Roughly how long sending [frameCount] frames will take, going by the last upload. For
+     * things that must be right at the moment they appear, like a clock.
+     */
+    fun estimatedSendMs(frameCount: Int): Long = ((frameCount + UPLOAD_OVERHEAD_PACKETS) * packetMs).toLong()
+
+    private val _sendProgress = MutableStateFlow<Float?>(null)
+    /** How much of a picture or animation has been sent, 0–1, or null when nothing is being sent. */
+    val sendProgress: StateFlow<Float?> = _sendProgress.asStateFlow()
 
     /** False after the user taps Disconnect, so we don't fight them by reconnecting. */
     private var autoReconnect = true
@@ -210,20 +224,36 @@ class BackpackViewModel(application: Application) : AndroidViewModel(application
             frames = listOf(pixTestPattern(width, height)),
             width = width,
             height = height,
-            frameMs = STILL_FRAME_MS,
+            durationsMs = listOf(STILL_FRAME_MS),
             direction = if (playOnce) PixDirection.NORMAL_STOP else PixDirection.NORMAL,
         )
 
     /** Sends a still picture (any colours; reduced to the 256-colour palette here). */
     fun sendImage(pixels: IntArray, width: Int, height: Int) =
-        send("image", listOf(PixelArt.quantize(pixels)), width, height, STILL_FRAME_MS, PixDirection.NORMAL_STOP)
+        send("image", listOf(PixelArt.quantize(pixels)), width, height, listOf(STILL_FRAME_MS), PixDirection.NORMAL_STOP)
 
     /**
      * Sends [frames] to play in a loop, each shown for [frameMs] milliseconds. Together the
      * frames must use no more than 256 colours.
      */
     fun sendAnimation(frames: List<IntArray>, width: Int, height: Int, frameMs: Int) =
-        send("animation", frames, width, height, frameMs, PixDirection.NORMAL)
+        send("animation", frames, width, height, List(frames.size) { frameMs }, PixDirection.NORMAL)
+
+    /**
+     * Sends [frames] for the backpack to play through once by itself, each for its own time
+     * in [durationsMs] (65 seconds at most), stopping on the last. This is how a clock or a
+     * timer keeps going with the phone in a pocket. [onShown] runs once it has started
+     * playing; it doesn't run if the sending fails. Together the frames must use no more than
+     * 256 colours. [label] names it in messages ("Sending [label]…").
+     */
+    fun sendSequence(
+        label: String,
+        frames: List<IntArray>,
+        width: Int,
+        height: Int,
+        durationsMs: List<Int>,
+        onShown: () -> Unit = {},
+    ) = send(label, frames, width, height, durationsMs, PixDirection.NORMAL_STOP, onShown)
 
     /**
      * Uploads [frames]. If the current brightness is above what the brightest frame can show
@@ -236,32 +266,47 @@ class BackpackViewModel(application: Application) : AndroidViewModel(application
         frames: List<IntArray>,
         width: Int,
         height: Int,
-        frameMs: Int,
+        durationsMs: List<Int>,
         direction: Int,
+        onShown: () -> Unit = {},
     ) = runAction("Sending $label…") {
         val animation = PixAnimation(
             width = width,
             height = height,
             frames = frames,
-            frameDurationsMs = List(frames.size) { frameMs },
+            frameDurationsMs = durationsMs,
             direction = direction,
         )
         val limit = frames.minOf(PixBrightness::maxUserPercentFor)
         val current = currentBrightnessPercent()
         var note = ""
-        if (current == null || current > limit) {
-            _message.value = "Setting brightness to $limit% for this $label…"
-            backpack.setBrightness(limit)
-            if (current != null) note = " Brightness lowered to $limit% for this $label."
-        }
-        _brightnessLimit.value = limit
+        _sendProgress.value = 0f
+        try {
+            if (current == null || current > limit) {
+                _message.value = "Setting brightness to $limit% for this $label…"
+                backpack.setBrightness(limit)
+                if (current != null) note = " Brightness lowered to $limit% for this $label."
+            }
+            _brightnessLimit.value = limit
 
-        backpack.showAnimation(animation) { sent, total ->
-            _message.value = "Sending $label… $sent/$total"
+            _message.value = "Sending $label…"
+            val began = SystemClock.elapsedRealtime()
+            var packets = 0
+            backpack.showAnimation(animation) { sent, total ->
+                packets = total
+                _sendProgress.value = if (total > 0) (sent.toFloat() / total).coerceIn(0f, 1f) else 0f
+            }
+            if (packets > 0) packetMs = (SystemClock.elapsedRealtime() - began).toFloat() / packets
+        } finally {
+            _sendProgress.value = null
         }
         _device.value?.let { device ->
-            rememberSent(SentPicture(device.address, width, height, frames, frameMs, System.currentTimeMillis()))
+            // Something that plays once is remembered as its first frame: Home shows what's on
+            // the backpack as a loop, and a finished countdown starting over there would be wrong.
+            val kept = if (direction == PixDirection.NORMAL_STOP) frames.take(1) else frames
+            rememberSent(SentPicture(device.address, width, height, kept, durationsMs.first(), System.currentTimeMillis()))
         }
+        onShown()
         "Sent the $label.$note"
     }
 
@@ -325,6 +370,8 @@ class BackpackViewModel(application: Application) : AndroidViewModel(application
         const val MAX_RETRIES = 3
         const val RETRY_DELAY_MS = 2_000L
         const val STILL_FRAME_MS = 1000
+        /** Packets in an upload besides one per frame: mode, palette, durations and so on. */
+        const val UPLOAD_OVERHEAD_PACKETS = 6
         const val LAST_SENT_FILE = "last_sent_picture.bin"
         val FIRMWARE_UUID: UUID = UUID.fromString("00002a26-0000-1000-8000-00805f9b34fb")
         val HARDWARE_UUID: UUID = UUID.fromString("00002a27-0000-1000-8000-00805f9b34fb")

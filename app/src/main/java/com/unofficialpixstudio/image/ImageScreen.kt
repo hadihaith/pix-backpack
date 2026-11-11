@@ -56,6 +56,7 @@ import com.unofficialpixstudio.ble.GattState
 import com.unofficialpixstudio.ble.PixBrightness
 import com.unofficialpixstudio.ui.components.LedDisplay
 import com.unofficialpixstudio.ui.components.PixIcons
+import com.unofficialpixstudio.ui.components.SendProgress
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -77,6 +78,7 @@ fun PictureScreen(viewModel: BackpackViewModel, modifier: Modifier = Modifier) {
     val displaySize by viewModel.displaySize.collectAsState()
     val busy by viewModel.busy.collectAsState()
     val message by viewModel.message.collectAsState()
+    val sendProgress by viewModel.sendProgress.collectAsState()
     val displayWidth = displaySize.width
     val displayHeight = displaySize.height
 
@@ -193,9 +195,12 @@ fun PictureScreen(viewModel: BackpackViewModel, modifier: Modifier = Modifier) {
                         contentPadding = PaddingValues(vertical = 12.dp),
                     ) { Text(if (busy) "Sending…" else "Send to backpack") }
                     val status = if (!ready) "Backpack not connected." else message
-                    status?.let {
+                    val progress = sendProgress
+                    if (ready && progress != null) {
+                        SendProgress(progress)
+                    } else if (status != null) {
                         Text(
-                            it,
+                            status,
                             style = MaterialTheme.typography.bodySmall,
                             color = if (!ready) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                         )

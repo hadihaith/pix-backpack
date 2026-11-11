@@ -13,7 +13,7 @@ class AnimationPresetsTest {
 
     @Test
     fun presetsHaveUniqueIdsAndSensibleSpeeds() {
-        assertEquals(5, AnimationPresets.all.size)
+        assertEquals(30, AnimationPresets.all.size)
         assertEquals(AnimationPresets.all.size, AnimationPresets.all.map { it.id }.toSet().size)
         for (preset in AnimationPresets.all) {
             assertTrue(preset.name, preset.defaultFrameMs in AnimationPresets.MIN_FRAME_MS..AnimationPresets.MAX_FRAME_MS)

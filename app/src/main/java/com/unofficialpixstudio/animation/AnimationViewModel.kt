@@ -7,21 +7,23 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 
 /**
- * What the Animate tab has selected, kept here so it's still there after switching tabs or
- * rotating: the chosen preset, and the frame time the user set for each one.
+ * Where the Animate tab is, kept here so it's still there after switching tabs or rotating:
+ * the animation whose page is open, and the frame time the user set for each one.
  */
 class AnimationViewModel : ViewModel() {
 
-    var selected: AnimationPreset by mutableStateOf(AnimationPresets.all.first())
+    /** The animation whose page is open, or null while browsing all of them. */
+    var open: AnimationPreset? by mutableStateOf(null)
         private set
 
     private val chosenFrameMs = mutableStateMapOf<String, Int>()
 
-    /** Drawn frames by preset and display size; drawing them again every recomposition would be wasteful. */
-    private val drawn = HashMap<String, List<IntArray>>()
+    fun open(preset: AnimationPreset) {
+        open = preset
+    }
 
-    fun select(preset: AnimationPreset) {
-        selected = preset
+    fun close() {
+        open = null
     }
 
     /** Milliseconds between frames for [preset]: the user's choice, or its default. */
@@ -30,7 +32,4 @@ class AnimationViewModel : ViewModel() {
     fun setFrameMs(preset: AnimationPreset, frameMs: Int) {
         chosenFrameMs[preset.id] = frameMs.coerceIn(AnimationPresets.MIN_FRAME_MS, AnimationPresets.MAX_FRAME_MS)
     }
-
-    fun frames(preset: AnimationPreset, width: Int, height: Int): List<IntArray> =
-        drawn.getOrPut("${preset.id}/$width/$height") { preset.frames(width, height) }
 }

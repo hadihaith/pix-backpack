@@ -44,6 +44,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import com.unofficialpixstudio.ui.components.SendProgress
 import kotlin.math.roundToInt
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -69,6 +70,7 @@ fun DeveloperScreen(
     val readingAll by viewModel.readingAll.collectAsState()
     val busy by viewModel.busy.collectAsState()
     val message by viewModel.message.collectAsState()
+    val sendProgress by viewModel.sendProgress.collectAsState()
     val brightnessLimit by viewModel.brightnessLimit.collectAsState()
 
     BackHandler(onBack = onBack)
@@ -133,6 +135,7 @@ fun DeveloperScreen(
                     values = values,
                     busy = busy,
                     message = message,
+                    sendProgress = sendProgress,
                     brightnessLimit = brightnessLimit,
                     onSetBrightness = viewModel::setBrightness,
                     onSendTestImage = viewModel::sendTestImage,
@@ -162,6 +165,7 @@ private fun ControlsSection(
     values: Map<UUID, CharacteristicReading>,
     busy: Boolean,
     message: String?,
+    sendProgress: Float?,
     brightnessLimit: Int,
     onSetBrightness: (percent: Int) -> Unit,
     onSendTestImage: (width: Int, height: Int, playOnce: Boolean) -> Unit,
@@ -219,8 +223,12 @@ private fun ControlsSection(
             enabled = !busy,
         )
 
-        message?.let {
-            Text(it, style = MaterialTheme.typography.bodySmall)
+        if (sendProgress != null) {
+            SendProgress(sendProgress)
+        } else {
+            message?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall)
+            }
         }
     }
 }

@@ -41,6 +41,7 @@ import com.unofficialpixstudio.ui.components.ConnectionPill
 import com.unofficialpixstudio.ui.components.LedDisplay
 import com.unofficialpixstudio.ui.components.PixCard
 import com.unofficialpixstudio.ui.components.PixIcons
+import com.unofficialpixstudio.ui.components.SendProgress
 import com.unofficialpixstudio.ui.components.look
 import kotlin.math.roundToInt
 
@@ -61,6 +62,7 @@ fun HomeScreen(
     val brightnessLimit by viewModel.brightnessLimit.collectAsState()
     val busy by viewModel.busy.collectAsState()
     val message by viewModel.message.collectAsState()
+    val sendProgress by viewModel.sendProgress.collectAsState()
     val connected = state is GattState.Ready
 
     Column(
@@ -169,14 +171,19 @@ fun HomeScreen(
             modifier = Modifier.fillMaxWidth(),
         )
 
-        message?.let {
-            Text(
-                it,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.fillMaxWidth(),
-                textAlign = TextAlign.Center,
-            )
+        val progress = sendProgress
+        if (progress != null) {
+            SendProgress(progress)
+        } else {
+            message?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.fillMaxWidth(),
+                    textAlign = TextAlign.Center,
+                )
+            }
         }
     }
 }
